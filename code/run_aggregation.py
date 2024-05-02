@@ -12,7 +12,7 @@ categorical_variables = ['workclass',
                        'native_country', 
                        'income']
 
-continuos_variables = ['age',
+continuous_variables = ['age',
                        'fnlwgt',
                        'capital_gain',
                        'capital_loss',
@@ -43,10 +43,10 @@ def fetch_grouped_data(table_name, a):
         # if categorical_variable!=a:
         #     query += f'count({categorical_variable}) as count_{categorical_variable}, '
     query += f'count(*) as count, '
-    for continuos_variable in continuos_variables:
-        if continuos_variable!=a:
-            query += f'''sum({continuos_variable}) as sum_{continuos_variable}, 
-            avg({continuos_variable}) as avg_{continuos_variable}, '''
+    for continuous_variable in continuous_variables:
+        if continuous_variable!=a:
+            query += f'''sum({continuous_variable}) as sum_{continuous_variable}, 
+            avg({continuous_variable}) as avg_{continuous_variable}, '''
     query = query[:-2]
 
     query += f' from {table_name} group by {a} order by {a}'
@@ -54,6 +54,21 @@ def fetch_grouped_data(table_name, a):
     rows_fetched, col_names = execute_query_and_get_rows(conn, query)
 
     return np.asarray(rows_fetched), col_names
+
+def get_probability_distribution(attribute):
+    probability_distribution = np.array([x / sum(attribute) for x in attribute], dtype=np.float32)
+
+    return probability_distribution
+
+def kl_divergence(target, reference):
+    kl_divergence_value = np.sum(target * np.log(target/reference))
+
+    return kl_divergence_value
+
+def get_top_k_divergences(kl_diveregences, k):
+    top_k_items = sorted(kl_diveregences.items(), key = lambda item: item[1], reverse=True)[:k]
+    
+    return dict(top_k_items)
 
 married_data_grouped_by_a, col_names = fetch_grouped_data(table_name='married', a='sex')
 unmarried_data_grouped_by_a, _ = fetch_grouped_data(table_name='unmarried', a='sex')
@@ -74,7 +89,26 @@ for i in range(1, len(col_names)):
 print("Married:", dict_of_prob_distribution_married)
 print("Unmarried:", dict_of_prob_distribution_unmarried)
 
-## TODOs
 ## 1. dict_of_prob_distribution_xxxx contains key value pairs. Need to normalize the values in [0,1] range such that they add up to 1.
+ref_prob_dist = {}
+for m_ref in list(dict_of_prob_distribution_married.keys())[1:]: # excluded the count from the probability distributions
+    ref_prob_dist[f'{m_ref}'] = get_probability_distribution(dict_of_prob_distribution_married[m_ref])
+
+target_prob_dist = {}
+for m_target in list(dict_of_prob_distribution_unmarried.keys())[1:]: # excluded the count from the probability distributions
+    target_prob_dist[f'{m_target}'] = get_probability_distribution(dict_of_prob_distribution_unmarried[m_target])
+
 ## 2. Calculate KL-divergence for each key between dict_of_prob_distribution_married and dict_of_prob_distribution_unmarried.
+kld_values = {}
+for key in target_prob_dist:
+    kld_values[key] = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
+    #print(f"KL-Divergence of '{key}' between Unmarried and Married people is = {kld_values[key]:.4f}")
+
+k = 5
+top_k_diveregences = get_top_k_divergences(kld_values, k)
+print(f'Top {k} highest utilities:')
+for i in top_k_diveregences:
+    print(f"{i} = {top_k_diveregences[i]:.4f}")
+
+## TODOs
 ## 3. Confidence interval calculation using Hoeffding-Serfling inequality.
