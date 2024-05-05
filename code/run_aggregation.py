@@ -149,9 +149,10 @@ for key1, value1 in dict_of_prob_distribution_target.items():
         for missing_key_in_reference in missing_keys_in_reference:
             dict_of_prob_distribution_reference[key1][key2][missing_key_in_reference] = 0
 
-all_ref_prob_dist = {}
-all_target_prob_dist = {}
-all_kl_divergences = {}
+# all_ref_prob_dist = {}
+# all_target_prob_dist = {}
+# all_kl_divergences = {}
+kld_values = {}
 for key1, value1 in dict_of_prob_distribution_target.items():
     ref_prob_dist = {}
 
@@ -171,11 +172,14 @@ for key1, value1 in dict_of_prob_distribution_target.items():
         target_prob_dist[f'{m_target}'] = get_probability_distribution(list_of_values_target)
 
     ## 2. Calculate KL-divergence for each key between dict_of_prob_distribution_married and dict_of_prob_distribution_unmarried.
-    kld_values = {}
+    # kld_values = {}
     for key in target_prob_dist:
-        kld_values[f'{key1}_{key}'] = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
+        kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
+        if not np.isnan(kl_value) and not np.isinf(kl_value):
+            kld_values[f'{key1}_{key}'] = kl_value
     #print(f"KL-Divergence of '{key}' between Unmarried and Married people is = {kld_values[key]:.4f}")
 
+# print(kld_values)
 k = 5
 top_k_diveregences = get_top_k_divergences(kld_values, k)
 print(f'Top {k} highest utilities:')
