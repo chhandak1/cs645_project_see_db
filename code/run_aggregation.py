@@ -99,6 +99,13 @@ def get_probability_distribution(attribute):
     return probability_distribution
 
 def kl_divergence(target, reference):
+    # epsilon is smallest positive float
+    epsilon = np.finfo(float).eps
+
+    # ensuring both target and reference values are between 'epsilon' and '1.0' to prevent divide by 0 errors.
+    target = np.clip(target, epsilon, 1.0)
+    reference = np.clip(reference, epsilon, 1.0)
+    
     kl_divergence_value = np.sum(target * np.log(target/reference))
 
     return kl_divergence_value
