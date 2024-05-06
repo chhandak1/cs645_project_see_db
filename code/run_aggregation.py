@@ -188,3 +188,25 @@ for i in top_k_diveregences:
 
 # ## TODOs
 # ## 3. Confidence interval calculation using Hoeffding-Serfling inequality.
+import math
+
+def hoeffding_serfling_confidence_interval(Y, N, confidence_level = 0.95):
+    """
+    These are named based on the paper.
+    From paper: "each value in Y corresponds to an estimate of utility computed based on the records seen so far."
+    So, we probbaly need to call this function for each view in each phase?!
+    """
+    m = len(Y)
+    mean = sum(Y) / m
+    
+    # Let's find the confidence interval
+    temp = (1 - (m - 1) / N)
+    epsilon = math.sqrt((temp * (2 * math.log(math.log(m) + math.log(math.pi**2 / (3 * confidence_level))))) / (2 * m))
+    
+    # Let's find lower and upper bounds
+    lower_bound = mean - epsilon
+    upper_bound = mean + epsilon
+
+    return mean, lower_bound, upper_bound
+
+
