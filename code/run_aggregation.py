@@ -1,6 +1,9 @@
+import math
 import psycopg2
 import numpy as np
 import pandas as pd
+
+### INITIALIZERS ###
 
 categorical_variables = ['workclass', 
                        'education', 
@@ -22,8 +25,18 @@ conn = psycopg2.connect(
     host="localhost",
     database="census",
     user="postgres", ## Add your SQL username here (postgres by default)
-    password="C!sco123" ## Add your SQL password here
+    password="CS645dbms" ## Add your SQL password here
 )
+
+k = 5
+num_partitions = 10 ##Number of iterations/splits
+confidence_level = 0.95
+
+cumulative_sums = {}
+count_entries = {}
+running_means = {}
+
+#### METHODS ####
 
 def execute_query_and_get_rows(connection, query):
     cur = connection.cursor()
@@ -65,7 +78,7 @@ def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
         query += f'(t.{grouping_attribute}, t.g1), '
     query = query[:-2] + ') order by t.g1'
     
-    print(query)
+    #print(query)
     
     rows_fetched, col_names = execute_query_and_get_rows(conn, query)
 
@@ -110,6 +123,11 @@ def kl_divergence(target, reference):
 
     return kl_divergence_value
 
+def sort_kl_divergences(kl_divergences):
+    sorted_kl_divergences = sorted(kl_divergences.items(), key = lambda item: item[1], reverse=True)
+
+    return dict(sorted_kl_divergences)
+
 def get_top_k_divergences(kl_diveregences, k):
     top_k_items = sorted(kl_diveregences.items(), key = lambda item: item[1], reverse=True)[:k]
     
@@ -127,14 +145,53 @@ def get_database_size(connection):
 
     return table_size
 
+def get_running_means(kld_values):
+    for key, value in kld_values.items():
+        if key in cumulative_sums:
+            cumulative_sums[key] += value
+            count_entries[key] += 1
+        else:
+            cumulative_sums[key] = value
+            count_entries[key] = 1
+        
+        running_means[key] = cumulative_sums[key] / count_entries[key]
+
+    return running_means
+
+def hoeffding_serfling_confidence_interval(Y, N, delta):
+    """
+    These are named based on the paper.
+    From paper: "each value in Y corresponds to an estimate of utility computed based on the records seen so far."
+    So, we probbaly need to call this function for each view in each phase?!
+    """
+    m = len(Y)
+    mean = sum(Y.values()) / m
+    
+    # Let's find the confidence interval
+    temp = (1 - (m - 1) / N)
+    epsilon = math.sqrt((temp * (2 * math.log(math.log(m) + math.log(math.pi**2 / (3 * delta))))) / (2 * m))
+    
+    # Let's find lower and upper bounds
+    lower_bound = mean - epsilon
+    upper_bound = mean + epsilon
+
+    return epsilon, lower_bound, upper_bound
+
+def hoeffding_serfling_inequality(m, n, delta):
+    epsilon = math.sqrt((1 - (m - 1) / n) * (math.log(2 / delta) / (2 * m)))
+    return epsilon
+
+### RUN PROGRAM ###
+
 list_of_list_of_groupby_attributes = [categorical_variables]
 
-num_parititions = 10 ##Number of iterations/splits
+
 table_size = get_database_size(conn)
 
-partition_size = np.ceil(table_size/num_parititions)
+partition_size = np.ceil(table_size/num_partitions)
 
-for i in range(num_parititions):
+for i in range(num_partitions):
+    #print(f'RUN {i+1}:')
     lower_bound = round(i * partition_size)
     upper_bound = round(lower_bound + partition_size)
     for list_of_groupby_attributes in list_of_list_of_groupby_attributes:
@@ -143,10 +200,8 @@ for i in range(num_parititions):
         # print(reference_array.shape)
         # print(target_array.shape)
 
-    df = pd.DataFrame(data, columns=col_names)
-    df.to_csv('check2.csv')
-
-    
+    # df = pd.DataFrame(data, columns=col_names)
+    # df.to_csv('check2.csv')    
 
     # print(data)
 
@@ -161,15 +216,14 @@ for i in range(num_parititions):
 
     # print(dict_of_prob_distribution_target)
 
-
     for key1, value1 in dict_of_prob_distribution_target.items():
         for key2, value2 in dict_of_prob_distribution_target[key1].items():
             target_keys = set(list(dict_of_prob_distribution_target[key1][key2].keys()))
             reference_keys = set(list(dict_of_prob_distribution_reference[key1][key2].keys()))
             missing_keys_in_target = reference_keys.difference(target_keys)
             missing_keys_in_reference = target_keys.difference(reference_keys)
-            print(key1)
-            print(missing_keys_in_target, missing_keys_in_reference)
+            #print(key1)
+            #print(missing_keys_in_target, missing_keys_in_reference)
             for missing_key_in_target in missing_keys_in_target:
                 dict_of_prob_distribution_target[key1][key2][missing_key_in_target] = 0
             for missing_key_in_reference in missing_keys_in_reference:
@@ -197,44 +251,24 @@ for i in range(num_parititions):
                 list_of_values_target.append(dict_of_prob_distribution_reference[key1][m_target][label])
             target_prob_dist[f'{m_target}'] = get_probability_distribution(list_of_values_target)
 
-        ## 2. Calculate KL-divergence for each key between dict_of_prob_distribution_married and dict_of_prob_distribution_unmarried.
-        # kld_values = {}
         for key in target_prob_dist:
             kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
             if not np.isnan(kl_value) and not np.isinf(kl_value):
                 kld_values[f'{key1}_{key}'] = kl_value
-        #print(f"KL-Divergence of '{key}' between Unmarried and Married people is = {kld_values[key]:.4f}")
-
-
-# print(kld_values)
-k = 5
-top_k_diveregences = get_top_k_divergences(kld_values, k)
-print(f'Top {k} highest utilities:')
-for i in top_k_diveregences:
-    print(f"{i} = {top_k_diveregences[i]:.4f}")
-
-# ## TODOs
-# ## 3. Confidence interval calculation using Hoeffding-Serfling inequality.
-import math
-
-def hoeffding_serfling_confidence_interval(Y, N, confidence_level = 0.95):
-    """
-    These are named based on the paper.
-    From paper: "each value in Y corresponds to an estimate of utility computed based on the records seen so far."
-    So, we probbaly need to call this function for each view in each phase?!
-    """
-    m = len(Y)
-    mean = sum(Y) / m
+        
+        running_kld_mean = get_running_means(kld_values)
     
-    # Let's find the confidence interval
-    temp = (1 - (m - 1) / N)
-    epsilon = math.sqrt((temp * (2 * math.log(math.log(m) + math.log(math.pi**2 / (3 * confidence_level))))) / (2 * m))
+    sorted_kld_values = sort_kl_divergences(running_kld_mean)
+    max_kld_value = list(sorted_kld_values.values())[0]
     
-    # Let's find lower and upper bounds
-    lower_bound = mean - epsilon
-    upper_bound = mean + epsilon
+    delta = 1 - confidence_level
+    epsilon_m, lower_bound, upper_bound = hoeffding_serfling_confidence_interval(sorted_kld_values, partition_size, delta)
 
-    return mean, lower_bound, upper_bound
+
+    # top_k_diveregences = get_top_k_divergences(running_kld_mean, k)
+    # print(f'Top {k} highest utilities:')
+    # for i in top_k_diveregences:
+    #    print(f"{i} = {top_k_diveregences[i]:.4f}")
 
 
 conn.close()
