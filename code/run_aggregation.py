@@ -34,7 +34,7 @@ def execute_query_and_get_rows(connection, query):
 
     return rows, col_names
 
-def fetch_grouped_data(table_name, a, continous_vars):
+def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
 
     # assert (a in categorical_variables)
 
@@ -49,7 +49,7 @@ def fetch_grouped_data(table_name, a, continous_vars):
          inside_query += f'{continuous_var}, '
 
     inside_query = inside_query[:-2] + ", case when marital_status!=' Never-married' then 'target' else 'reference' end as g1"
-    inside_query += f" from {table_name})  as t"
+    inside_query += f" from {table_name} where row_id between {lower_bound} and {upper_bound})  as t"
 
     query += f'count(*) as count, '
     for continuous_variable in continuous_variables:
@@ -89,7 +89,7 @@ def get_data_for_col_name(data, col_names, col_num, aggregate_start_idx):
     for i in range(selected_data.shape[1]):
         selected_data_dict[col_names[i+aggregate_start_idx]] = {}
         for j in range(len(attribute_types)):
-            print(i,j)
+            # print(i,j)
             selected_data_dict[col_names[i+aggregate_start_idx]][attribute_types[j]] = selected_data[j, i]
     return selected_data_dict
 
@@ -115,76 +115,96 @@ def get_top_k_divergences(kl_diveregences, k):
     
     return dict(top_k_items)
 
+def get_database_size(connection):
+    cur = connection.cursor()
+    query = 'select max(row_id) from AdultData;'
+    cur.execute(query)
+    col_names = [desc[0] for desc in cur.description]
+    rows = cur.fetchall()
+    # print(rows)
+    table_size = rows[0][0]
+    cur.close()
+
+    return table_size
 
 list_of_list_of_groupby_attributes = [categorical_variables]
 
-for list_of_groupby_attributes in list_of_list_of_groupby_attributes:
-    data, col_names = fetch_grouped_data(table_name='AdultData', a=list_of_groupby_attributes, continous_vars=continuous_variables)
-    reference_array, target_array = split_into_reference_and_target(data)
-    print(reference_array.shape)
-    print(target_array.shape)
+num_parititions = 10 ##Number of iterations/splits
+table_size = get_database_size(conn)
 
-df = pd.DataFrame(data, columns=col_names)
-df.to_csv('check2.csv')
+partition_size = np.ceil(table_size/num_parititions)
 
-conn.close()
+for i in range(num_parititions):
+    lower_bound = round(i * partition_size)
+    upper_bound = round(lower_bound + partition_size)
+    for list_of_groupby_attributes in list_of_list_of_groupby_attributes:
+        data, col_names = fetch_grouped_data(table_name='AdultData', lower_bound=lower_bound, upper_bound=upper_bound, a=list_of_groupby_attributes, continous_vars=continuous_variables)
+        reference_array, target_array = split_into_reference_and_target(data)
+        # print(reference_array.shape)
+        # print(target_array.shape)
 
-print(data)
+    df = pd.DataFrame(data, columns=col_names)
+    df.to_csv('check2.csv')
 
-dict_of_prob_distribution_target = {}
-dict_of_prob_distribution_reference = {}
+    
 
-aggregate_start_idx = col_names.index('count')
+    # print(data)
 
-for i in range(1, aggregate_start_idx):
-    dict_of_prob_distribution_target[col_names[i]] = get_data_for_col_name(target_array, col_names,  col_num=i, aggregate_start_idx=aggregate_start_idx)
-    dict_of_prob_distribution_reference[col_names[i]] = get_data_for_col_name(reference_array, col_names, col_num=i, aggregate_start_idx=aggregate_start_idx)
+    dict_of_prob_distribution_target = {}
+    dict_of_prob_distribution_reference = {}
 
-# print(dict_of_prob_distribution_target)
+    aggregate_start_idx = col_names.index('count')
+
+    for i in range(1, aggregate_start_idx):
+        dict_of_prob_distribution_target[col_names[i]] = get_data_for_col_name(target_array, col_names,  col_num=i, aggregate_start_idx=aggregate_start_idx)
+        dict_of_prob_distribution_reference[col_names[i]] = get_data_for_col_name(reference_array, col_names, col_num=i, aggregate_start_idx=aggregate_start_idx)
+
+    # print(dict_of_prob_distribution_target)
 
 
-for key1, value1 in dict_of_prob_distribution_target.items():
-    for key2, value2 in dict_of_prob_distribution_target[key1].items():
-        target_keys = set(list(dict_of_prob_distribution_target[key1][key2].keys()))
-        reference_keys = set(list(dict_of_prob_distribution_reference[key1][key2].keys()))
-        missing_keys_in_target = reference_keys.difference(target_keys)
-        missing_keys_in_reference = target_keys.difference(reference_keys)
-        print(key1)
-        print(missing_keys_in_target, missing_keys_in_reference)
-        for missing_key_in_target in missing_keys_in_target:
-            dict_of_prob_distribution_target[key1][key2][missing_key_in_target] = 0
-        for missing_key_in_reference in missing_keys_in_reference:
-            dict_of_prob_distribution_reference[key1][key2][missing_key_in_reference] = 0
+    for key1, value1 in dict_of_prob_distribution_target.items():
+        for key2, value2 in dict_of_prob_distribution_target[key1].items():
+            target_keys = set(list(dict_of_prob_distribution_target[key1][key2].keys()))
+            reference_keys = set(list(dict_of_prob_distribution_reference[key1][key2].keys()))
+            missing_keys_in_target = reference_keys.difference(target_keys)
+            missing_keys_in_reference = target_keys.difference(reference_keys)
+            print(key1)
+            print(missing_keys_in_target, missing_keys_in_reference)
+            for missing_key_in_target in missing_keys_in_target:
+                dict_of_prob_distribution_target[key1][key2][missing_key_in_target] = 0
+            for missing_key_in_reference in missing_keys_in_reference:
+                dict_of_prob_distribution_reference[key1][key2][missing_key_in_reference] = 0
 
-# all_ref_prob_dist = {}
-# all_target_prob_dist = {}
-# all_kl_divergences = {}
-kld_values = {}
-for key1, value1 in dict_of_prob_distribution_target.items():
-    ref_prob_dist = {}
+    # all_ref_prob_dist = {}
+    # all_target_prob_dist = {}
+    # all_kl_divergences = {}
+    kld_values = {}
+    for key1, value1 in dict_of_prob_distribution_target.items():
+        ref_prob_dist = {}
 
-    for m_ref in list(dict_of_prob_distribution_target[key1].keys())[1:]: # excluded the count from the probability distributions
-        list_of_values_ref = []
-        list_of_labels = []
-        for label, aggregate in dict_of_prob_distribution_target[key1][m_ref].items():
-            list_of_labels.append(label)
-            list_of_values_ref.append(aggregate)
-        ref_prob_dist[f'{m_ref}'] = get_probability_distribution(list_of_values_ref)
+        for m_ref in list(dict_of_prob_distribution_target[key1].keys())[1:]: # excluded the count from the probability distributions
+            list_of_values_ref = []
+            list_of_labels = []
+            for label, aggregate in dict_of_prob_distribution_target[key1][m_ref].items():
+                list_of_labels.append(label)
+                list_of_values_ref.append(aggregate)
+            ref_prob_dist[f'{m_ref}'] = get_probability_distribution(list_of_values_ref)
 
-    target_prob_dist = {}
-    for m_target in list(dict_of_prob_distribution_reference[key1].keys())[1:]: # excluded the count from the probability distributions
-        list_of_values_target = []
-        for label in list_of_labels:
-            list_of_values_target.append(dict_of_prob_distribution_reference[key1][m_target][label])
-        target_prob_dist[f'{m_target}'] = get_probability_distribution(list_of_values_target)
+        target_prob_dist = {}
+        for m_target in list(dict_of_prob_distribution_reference[key1].keys())[1:]: # excluded the count from the probability distributions
+            list_of_values_target = []
+            for label in list_of_labels:
+                list_of_values_target.append(dict_of_prob_distribution_reference[key1][m_target][label])
+            target_prob_dist[f'{m_target}'] = get_probability_distribution(list_of_values_target)
 
-    ## 2. Calculate KL-divergence for each key between dict_of_prob_distribution_married and dict_of_prob_distribution_unmarried.
-    # kld_values = {}
-    for key in target_prob_dist:
-        kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
-        if not np.isnan(kl_value) and not np.isinf(kl_value):
-            kld_values[f'{key1}_{key}'] = kl_value
-    #print(f"KL-Divergence of '{key}' between Unmarried and Married people is = {kld_values[key]:.4f}")
+        ## 2. Calculate KL-divergence for each key between dict_of_prob_distribution_married and dict_of_prob_distribution_unmarried.
+        # kld_values = {}
+        for key in target_prob_dist:
+            kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
+            if not np.isnan(kl_value) and not np.isinf(kl_value):
+                kld_values[f'{key1}_{key}'] = kl_value
+        #print(f"KL-Divergence of '{key}' between Unmarried and Married people is = {kld_values[key]:.4f}")
+
 
 # print(kld_values)
 k = 5
@@ -217,3 +237,4 @@ def hoeffding_serfling_confidence_interval(Y, N, confidence_level = 0.95):
     return mean, lower_bound, upper_bound
 
 
+conn.close()
