@@ -25,10 +25,10 @@ conn = psycopg2.connect(
     host="localhost",
     database="census",
     user="postgres", ## Add your SQL username here (postgres by default)
-    password="CS645dbms" ## Add your SQL password here
+    password="C!sco123" ## Add your SQL password here
 )
 
-k = 5
+k = 1
 num_partitions = 10 ##Number of iterations/splits
 confidence_level = 0.95
 
@@ -116,8 +116,8 @@ def kl_divergence(target, reference):
     epsilon = np.finfo(float).eps
 
     # ensuring both target and reference values are between 'epsilon' and '1.0' to prevent divide by 0 errors.
-    target = np.clip(target, epsilon, 1.0)
-    reference = np.clip(reference, epsilon, 1.0)
+    # target = np.clip(target, epsilon, 1.0)
+    # reference = np.clip(reference, epsilon, 1.0)
     
     kl_divergence_value = np.sum(target * np.log(target/reference))
 
@@ -147,14 +147,16 @@ def get_database_size(connection):
 
 def get_running_means(kld_values):
     for key, value in kld_values.items():
-        if key in cumulative_sums:
-            cumulative_sums[key] += value
-            count_entries[key] += 1
-        else:
-            cumulative_sums[key] = value
-            count_entries[key] = 1
+        # if key in cumulative_sums:
+            # cumulative_sums[key] += value
+            # count_entries[key] += 1
+        running_means[key] = np.mean(value)
+        # else:
+        #     running_means[key] = np.nan
+            # cumulative_sums[key] = value
+            # count_entries[key] = 1
         
-        running_means[key] = cumulative_sums[key] / count_entries[key]
+        # running_means[key] = cumulative_sums[key] / count_entries[key]
 
     return running_means
 
@@ -165,7 +167,7 @@ def hoeffding_serfling_confidence_interval(Y, N, delta):
     So, we probbaly need to call this function for each view in each phase?!
     """
     m = len(Y)
-    mean = sum(Y.values()) / m
+    mean = sum(Y) / m
     
     # Let's find the confidence interval
     temp = (1 - (m - 1) / N)
@@ -175,7 +177,7 @@ def hoeffding_serfling_confidence_interval(Y, N, delta):
     lower_bound = mean - epsilon
     upper_bound = mean + epsilon
 
-    return epsilon, lower_bound, upper_bound
+    return mean, lower_bound, upper_bound
 
 def hoeffding_serfling_inequality(m, n, delta):
     epsilon = math.sqrt((1 - (m - 1) / n) * (math.log(2 / delta) / (2 * m)))
@@ -190,7 +192,15 @@ table_size = get_database_size(conn)
 
 partition_size = np.ceil(table_size/num_partitions)
 
+kld_values = {}
+pruning_list = set()
+
 for i in range(num_partitions):
+    
+    mean_kld = {}
+    lower_bound_kld = {}
+    upper_bound_kld = {}
+
     #print(f'RUN {i+1}:')
     lower_bound = round(i * partition_size)
     upper_bound = round(lower_bound + partition_size)
@@ -232,7 +242,7 @@ for i in range(num_partitions):
     # all_ref_prob_dist = {}
     # all_target_prob_dist = {}
     # all_kl_divergences = {}
-    kld_values = {}
+   
     for key1, value1 in dict_of_prob_distribution_target.items():
         ref_prob_dist = {}
 
@@ -253,22 +263,45 @@ for i in range(num_partitions):
 
         for key in target_prob_dist:
             kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
-            if not np.isnan(kl_value) and not np.isinf(kl_value):
-                kld_values[f'{key1}_{key}'] = kl_value
-        
-        running_kld_mean = get_running_means(kld_values)
-    
-    sorted_kld_values = sort_kl_divergences(running_kld_mean)
-    max_kld_value = list(sorted_kld_values.values())[0]
+            if np.isnan(kl_value) or np.isinf(kl_value):
+                kl_value = 0 
+            # if np.isinf(kl_value):
+            #     kl_value = np.nan
+            if f'{key1}_{key}' in kld_values.keys():
+                kld_values[f'{key1}_{key}'].append(kl_value)
+            else:
+                kld_values[f'{key1}_{key}'] = [kl_value]
+
+        print(kld_values)
+        # print(kld_values)
+        # running_kld_mean = get_running_means(kld_values)
+        # print(running_kld_mean)
+    # sorted_kld_values = sort_kl_divergences(running_kld_mean)
+    # max_kld_value = list(sorted_kld_values.values())[0]
     
     delta = 1 - confidence_level
-    epsilon_m, lower_bound, upper_bound = hoeffding_serfling_confidence_interval(sorted_kld_values, partition_size, delta)
+    for key_kld, list_kld_values in kld_values.items():
+        mean_kld[key_kld], lower_bound_kld[key_kld], upper_bound_kld[key_kld] = hoeffding_serfling_confidence_interval(list_kld_values, partition_size, delta)
+    
+    sorted_kld_values = sort_kl_divergences(mean_kld)
+    top_k_kld_keys = list(sorted_kld_values.keys())[:k]
+    
+    kth_kld_key = list(sorted_kld_values.keys())[k-1]
+    lower_bound_kth_kld_value = lower_bound_kld[kth_kld_key]
+    print("Lower bound:", lower_bound_kth_kld_value)
+    for key_kld, upper_bound_kld_val in upper_bound_kld.items():
+        if key_kld not in top_k_kld_keys:
+            if upper_bound_kld_val<lower_bound_kth_kld_value:
+                pruning_list.add(key_kld)
+    print(len(list(sorted_kld_values.keys())))
+    print("Top k:",top_k_kld_keys)
+    print("Pruned:",pruning_list)
+    print()
+    # # print(epsilon_m, lower_bound, upper_bound)
 
-
-    # top_k_diveregences = get_top_k_divergences(running_kld_mean, k)
-    # print(f'Top {k} highest utilities:')
-    # for i in top_k_diveregences:
-    #    print(f"{i} = {top_k_diveregences[i]:.4f}")
-
+    # # top_k_diveregences = get_top_k_divergences(running_kld_mean, k)
+    # # print(f'Top {k} highest utilities:')
+    # # for i in top_k_diveregences:
+    # #    print(f"{i} = {top_k_diveregences[i]:.4f}")
 
 conn.close()
