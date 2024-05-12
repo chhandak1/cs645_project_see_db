@@ -28,7 +28,7 @@ conn = psycopg2.connect(
     password="C!sco123" ## Add your SQL password here
 )
 
-k = 1
+k = 5
 num_partitions = 10 ##Number of iterations/splits
 confidence_level = 0.95
 
@@ -62,6 +62,12 @@ def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
          inside_query += f'{continuous_var}, '
 
     inside_query = inside_query[:-2] + ", case when marital_status!=' Never-married' then 'target' else 'reference' end as g1"
+    # inside_query = inside_query[:-2] + ''', case when marital_status=' Never-married' 
+    # OR marital_status=' Separated' 
+    # OR marital_status=' Widowed'
+    # OR marital_status=' Divorced' then 'reference' 
+    # else 'target' end as g1'''
+    
     inside_query += f" from {table_name} where row_id between {lower_bound} and {upper_bound})  as t"
 
     query += f'count(*) as count, '
@@ -78,7 +84,7 @@ def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
         query += f'(t.{grouping_attribute}, t.g1), '
     query = query[:-2] + ') order by t.g1'
     
-    #print(query)
+    print(query)
     
     rows_fetched, col_names = execute_query_and_get_rows(conn, query)
 
@@ -206,6 +212,8 @@ for i in range(num_partitions):
     upper_bound = round(lower_bound + partition_size)
     for list_of_groupby_attributes in list_of_list_of_groupby_attributes:
         data, col_names = fetch_grouped_data(table_name='AdultData', lower_bound=lower_bound, upper_bound=upper_bound, a=list_of_groupby_attributes, continous_vars=continuous_variables)
+        df = pd.DataFrame(data, columns=col_names)
+        df.to_csv('check2.csv')  
         reference_array, target_array = split_into_reference_and_target(data)
         # print(reference_array.shape)
         # print(target_array.shape)
@@ -264,7 +272,7 @@ for i in range(num_partitions):
         for key in target_prob_dist:
             kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
             if np.isnan(kl_value) or np.isinf(kl_value):
-                kl_value = 0 
+                kl_value = -np.inf
             # if np.isinf(kl_value):
             #     kl_value = np.nan
             if f'{key1}_{key}' in kld_values.keys():
