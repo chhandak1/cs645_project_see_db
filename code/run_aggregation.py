@@ -3,8 +3,14 @@ import psycopg2 # type: ignore
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
 import matplotlib.pyplot as plt
+import matplotlib
+import os
+
+matplotlib.use('TKAgg')
 
 ### INITIALIZERS ###
+
+PLOTS_DIR = '../plots/sum_avg_never_married_2'
 
 categorical_variables = ['workclass', 
                        'education', 
@@ -26,7 +32,7 @@ conn = psycopg2.connect(
     host="localhost",
     database="census",
     user="postgres", ## Add your SQL username here (postgres by default)
-    password="tekken1373" ## Add your SQL password here
+    password="C!sco123" ## Add your SQL password here
 )
 
 k = 5
@@ -85,7 +91,7 @@ def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
         query += f'(t.{grouping_attribute}, t.g1), '
     query = query[:-2] + ') order by t.g1'
     
-    #print(query)
+    # print(query)
     
     rows_fetched, col_names = execute_query_and_get_rows(conn, query)
 
@@ -200,51 +206,96 @@ def plot_view(text):
     (4) Creates a visualization similar to Figure 1. in SeeDB paper.
     """
     parts = text.split('_')
+    if 'count' not in text:
+        
+        if len(parts) < 3:
+            raise ValueError("Input format must be 'attribute_aggregationFunction_attributeName'")
+
+        group_by_attribute = parts[0]
+        aggregation_function = parts[1]
+        target_attribute = '_'.join(parts[2:])  # Join the rest in case there are underscores in the attribute name
+
+        column_name = f"{aggregation_function}_{target_attribute}"
+
+        query = f"""
+        SELECT {group_by_attribute},
+            CASE 
+                WHEN marital_status = ' Never-married' THEN 'unmarried'
+                ELSE 'married'
+            END AS marital_status,
+            {aggregation_function}({target_attribute}) AS {column_name}
+        FROM adultdata
+        GROUP BY {group_by_attribute}, 
+                CASE 
+                    WHEN marital_status = ' Never-married' THEN 'unmarried'
+                    ELSE 'married'
+                END
+        ORDER BY {group_by_attribute}, marital_status;
+        """
+        cur = conn.cursor()
+        cur.execute(query)
+        results = cur.fetchall()
+        columns = [column[0] for column in cur.description]
+        data = pd.DataFrame(results, columns=columns)
+        cur.close()
+
+        data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
+
+        plot_data = data.pivot(index=group_by_attribute, columns='marital_status', values= column_name)
+
+        # Plotting
+        plot_data.plot(kind='bar', figsize=(6, 4), color=['skyblue', 'navy'])
+        plt.title(f'{column_name} by \n{group_by_attribute.capitalize()} and Marital Status')
+        plt.xlabel(group_by_attribute.capitalize())
+        plt.ylabel(column_name.capitalize())
+        plt.xticks(rotation=0)
+        plt.legend(title='Marital Status')
+        plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+        plt.savefig(os.path.join(PLOTS_DIR, f'{text}.pdf'))
+        # plt.show()
+    else:
+        group_by_attribute = parts[0]
+        aggregation_function = parts[1]
+        # target_attribute = '_'.join(parts[2:])  # Join the rest in case there are underscores in the attribute name
+        query = f"""
+        SELECT {group_by_attribute},
+            CASE 
+                WHEN marital_status = ' Never-married' THEN 'unmarried'
+                ELSE 'married'
+            END AS marital_status,
+            count(*) AS count
+        FROM adultdata
+        GROUP BY {group_by_attribute}, 
+                CASE 
+                    WHEN marital_status = ' Never-married' THEN 'unmarried'
+                    ELSE 'married'
+                END
+        ORDER BY {group_by_attribute}, marital_status;
+        """
     
-    if len(parts) < 3:
-        raise ValueError("Input format must be 'attribute_aggregationFunction_attributeName'")
+        cur = conn.cursor()
+        cur.execute(query)
+        results = cur.fetchall()
+        columns = [column[0] for column in cur.description]
+        # print(columns)
+        # print(results)
+        data = pd.DataFrame(results, columns=columns)
 
-    group_by_attribute = parts[0]
-    aggregation_function = parts[1]
-    target_attribute = '_'.join(parts[2:])  # Join the rest in case there are underscores in the attribute name
+        cur.close()
+        column_name = f"{aggregation_function}"
+        data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
 
-    column_name = f"{aggregation_function}_{target_attribute}"
-
-    query = f"""
-    SELECT {group_by_attribute},
-           CASE 
-               WHEN marital_status = ' Never-married' THEN 'unmarried'
-               ELSE 'married'
-           END AS marital_status,
-           {aggregation_function}({target_attribute}) AS {column_name}
-    FROM adultdata
-    GROUP BY {group_by_attribute}, 
-             CASE 
-                 WHEN marital_status = ' Never-married' THEN 'unmarried'
-                 ELSE 'married'
-             END
-    ORDER BY {group_by_attribute}, marital_status;
-    """
-    cur = conn.cursor()
-    cur.execute(query)
-    results = cur.fetchall()
-    columns = [column[0] for column in cur.description]
-    data = pd.DataFrame(results, columns=columns)
-    cur.close()
-
-    data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
-
-    plot_data = data.pivot(index=group_by_attribute, columns='marital_status', values= column_name)
-
-    # Plotting
-    plot_data.plot(kind='bar', figsize=(10, 6), color=['skyblue', 'navy'])
-    plt.title(f'{column_name} by {group_by_attribute.capitalize()} and Marital Status')
-    plt.xlabel(group_by_attribute.capitalize())
-    plt.ylabel(column_name.capitalize())
-    plt.xticks(rotation=0)
-    plt.legend(title='Marital Status')
-    plt.show()
-
+        plot_data = data.pivot(index=group_by_attribute, columns='marital_status', values= column_name)
+        # print("Plot data:", plot_data)
+        # Plotting
+        plot_data.plot(kind='bar', figsize=(6, 4), color=['skyblue', 'navy'])
+        plt.title(f'{column_name} by \n{group_by_attribute.capitalize()} and Marital Status')
+        plt.xlabel(group_by_attribute.capitalize())
+        plt.ylabel(column_name.capitalize())
+        plt.xticks(rotation=0)
+        plt.legend(title='Marital Status')
+        plt.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+        plt.savefig(os.path.join(PLOTS_DIR, f'{text}.pdf'))
 
 ### RUN PROGRAM ###
 
@@ -310,32 +361,34 @@ for i in range(num_partitions):
     for key1, value1 in dict_of_prob_distribution_target.items():
         ref_prob_dist = {}
 
-        for m_ref in list(dict_of_prob_distribution_target[key1].keys())[1:]: # excluded the count from the probability distributions
+        for m_ref in list(dict_of_prob_distribution_target[key1].keys()): # excluded the count from the probability distributions
             list_of_values_ref = []
             list_of_labels = []
             for label, aggregate in dict_of_prob_distribution_target[key1][m_ref].items():
                 list_of_labels.append(label)
                 list_of_values_ref.append(aggregate)
             ref_prob_dist[f'{m_ref}'] = get_probability_distribution(list_of_values_ref)
-
+        # print(key1, ref_prob_dist)
         target_prob_dist = {}
-        for m_target in list(dict_of_prob_distribution_reference[key1].keys())[1:]: # excluded the count from the probability distributions
+        for m_target in list(dict_of_prob_distribution_reference[key1].keys()): # excluded the count from the probability distributions
             list_of_values_target = []
             for label in list_of_labels:
                 list_of_values_target.append(dict_of_prob_distribution_reference[key1][m_target][label])
             target_prob_dist[f'{m_target}'] = get_probability_distribution(list_of_values_target)
 
-        for key in target_prob_dist:
+        for key in target_prob_dist.keys():
             kl_value = kl_divergence(target_prob_dist[key], ref_prob_dist[key])
+            # print(key, target_prob_dist[key], ref_prob_dist[key], kl_value)
             if np.isnan(kl_value) or np.isinf(kl_value):
                 kl_value = -np.inf
             # if np.isinf(kl_value):
             #     kl_value = np.nan
-            if f'{key1}_{key}' in kld_values.keys():
-                kld_values[f'{key1}_{key}'].append(kl_value)
-            else:
-                kld_values[f'{key1}_{key}'] = [kl_value]
-
+            if  f'{key1}_{key}' not in pruning_list:
+                if f'{key1}_{key}' in kld_values.keys():
+                    kld_values[f'{key1}_{key}'].append(kl_value)
+                else:
+                    kld_values[f'{key1}_{key}'] = [kl_value]
+        
         # print(kld_values)
         # print(kld_values)
         # running_kld_mean = get_running_means(kld_values)
@@ -357,22 +410,11 @@ for i in range(num_partitions):
         if key_kld not in top_k_kld_keys:
             if upper_bound_kld_val<lower_bound_kth_kld_value:
                 pruning_list.add(key_kld)
-    #print(len(list(sorted_kld_values.keys())))
+                del kld_values[key_kld]
+
     print("Top k:",top_k_kld_keys)
 
-    #print("Pruned:",pruning_list)
-    #print()
-    # # print(epsilon_m, lower_bound, upper_bound)
-
-    # # top_k_diveregences = get_top_k_divergences(running_kld_mean, k)
-    # # print(f'Top {k} highest utilities:')
-    # # for i in top_k_diveregences:
-    # #    print(f"{i} = {top_k_diveregences[i]:.4f}")
-
-
-# This is an example to test the plot_view() function.
-# Now, we need to run this function for each view in our top_k views.
-text = "sex_avg_capital_gain"
-plot_view(text)
-
+for text in top_k_kld_keys:
+    plot_view(text)
+    print(text, mean_kld[text])
 conn.close()
