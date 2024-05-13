@@ -1,7 +1,8 @@
 import math
-import psycopg2
-import numpy as np
-import pandas as pd
+import psycopg2 # type: ignore
+import numpy as np # type: ignore
+import pandas as pd # type: ignore
+import matplotlib.pyplot as plt
 
 ### INITIALIZERS ###
 
@@ -25,7 +26,7 @@ conn = psycopg2.connect(
     host="localhost",
     database="census",
     user="postgres", ## Add your SQL username here (postgres by default)
-    password="C!sco123" ## Add your SQL password here
+    password="tekken1373" ## Add your SQL password here
 )
 
 k = 5
@@ -84,7 +85,7 @@ def fetch_grouped_data(table_name, lower_bound, upper_bound, a, continous_vars):
         query += f'(t.{grouping_attribute}, t.g1), '
     query = query[:-2] + ') order by t.g1'
     
-    print(query)
+    #print(query)
     
     rows_fetched, col_names = execute_query_and_get_rows(conn, query)
 
@@ -189,10 +190,65 @@ def hoeffding_serfling_inequality(m, n, delta):
     epsilon = math.sqrt((1 - (m - 1) / n) * (math.log(2 / delta) / (2 * m)))
     return epsilon
 
+def plot_view(text):
+    """
+    Input 'text' should be in this format: "attribute_aggregationFunction_attributeName" -- e.g., "income_avg_capital_gain"
+    This function: 
+    (1) Identifies a view by extracting its attributes and aggregate function
+    (2) Builds the corresponding SQL query to get data from database
+    (3) Runs the query and gets the output
+    (4) Creates a visualization similar to Figure 1. in SeeDB paper.
+    """
+    parts = text.split('_')
+    
+    if len(parts) < 3:
+        raise ValueError("Input format must be 'attribute_aggregationFunction_attributeName'")
+
+    group_by_attribute = parts[0]
+    aggregation_function = parts[1]
+    target_attribute = '_'.join(parts[2:])  # Join the rest in case there are underscores in the attribute name
+
+    column_name = f"{aggregation_function}_{target_attribute}"
+
+    query = f"""
+    SELECT {group_by_attribute},
+           CASE 
+               WHEN marital_status = ' Never-married' THEN 'unmarried'
+               ELSE 'married'
+           END AS marital_status,
+           {aggregation_function}({target_attribute}) AS {column_name}
+    FROM adultdata
+    GROUP BY {group_by_attribute}, 
+             CASE 
+                 WHEN marital_status = ' Never-married' THEN 'unmarried'
+                 ELSE 'married'
+             END
+    ORDER BY {group_by_attribute}, marital_status;
+    """
+    cur = conn.cursor()
+    cur.execute(query)
+    results = cur.fetchall()
+    columns = [column[0] for column in cur.description]
+    data = pd.DataFrame(results, columns=columns)
+    cur.close()
+
+    data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
+
+    plot_data = data.pivot(index=group_by_attribute, columns='marital_status', values= column_name)
+
+    # Plotting
+    plot_data.plot(kind='bar', figsize=(10, 6), color=['skyblue', 'navy'])
+    plt.title(f'{column_name} by {group_by_attribute.capitalize()} and Marital Status')
+    plt.xlabel(group_by_attribute.capitalize())
+    plt.ylabel(column_name.capitalize())
+    plt.xticks(rotation=0)
+    plt.legend(title='Marital Status')
+    plt.show()
+
+
 ### RUN PROGRAM ###
 
 list_of_list_of_groupby_attributes = [categorical_variables]
-
 
 table_size = get_database_size(conn)
 
@@ -280,7 +336,7 @@ for i in range(num_partitions):
             else:
                 kld_values[f'{key1}_{key}'] = [kl_value]
 
-        print(kld_values)
+        # print(kld_values)
         # print(kld_values)
         # running_kld_mean = get_running_means(kld_values)
         # print(running_kld_mean)
@@ -296,20 +352,27 @@ for i in range(num_partitions):
     
     kth_kld_key = list(sorted_kld_values.keys())[k-1]
     lower_bound_kth_kld_value = lower_bound_kld[kth_kld_key]
-    print("Lower bound:", lower_bound_kth_kld_value)
+    #print("Lower bound:", lower_bound_kth_kld_value)
     for key_kld, upper_bound_kld_val in upper_bound_kld.items():
         if key_kld not in top_k_kld_keys:
             if upper_bound_kld_val<lower_bound_kth_kld_value:
                 pruning_list.add(key_kld)
-    print(len(list(sorted_kld_values.keys())))
+    #print(len(list(sorted_kld_values.keys())))
     print("Top k:",top_k_kld_keys)
-    print("Pruned:",pruning_list)
-    print()
+
+    #print("Pruned:",pruning_list)
+    #print()
     # # print(epsilon_m, lower_bound, upper_bound)
 
     # # top_k_diveregences = get_top_k_divergences(running_kld_mean, k)
     # # print(f'Top {k} highest utilities:')
     # # for i in top_k_diveregences:
     # #    print(f"{i} = {top_k_diveregences[i]:.4f}")
+
+
+# This is an example to test the plot_view() function.
+# Now, we need to run this function for each view in our top_k views.
+text = "sex_avg_capital_gain"
+plot_view(text)
 
 conn.close()
